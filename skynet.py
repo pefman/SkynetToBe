@@ -1,10 +1,14 @@
-import http.client, json, sys, os, py_compile, tempfile, threading, time
+import http.client, json, sys, os, py_compile, tempfile, threading, time, argparse
+
+# ── args ───────────────────────────────────────────────────────────────────────
+
+_ap = argparse.ArgumentParser(description="Skynet self-evolution engine")
+_ap.add_argument("endpoint", help="LLM API base URL (e.g. https://api.example.com)")
+_ap.add_argument("--debug", action="store_true", help="Print all prompts and LLM responses")
+_args = _ap.parse_args()
+DEBUG = _args.debug
 
 # ── splash ─────────────────────────────────────────────────────────────────────
-
-if len(sys.argv) < 2:
-    print("Usage: python notskynet.py endpoint")
-    sys.exit(1)
 
 _SPLASH = """
                   \033[91m▄\033[0m
@@ -42,7 +46,7 @@ if ans != "y":
     sys.exit(0)
 print()
 
-_url = sys.argv[1]
+_url = _args.endpoint
 if "://" in _url:
     _url = _url.split("://", 1)[1]
 _parts = _url.split("/", 1)
@@ -105,9 +109,19 @@ def with_spinner(label, fn):
         t.join()
     return result
 
+# ── debug output ──────────────────────────────────────────────────────────────
+
+def debug_print(label, content):
+    bar = "\033[90m" + "─" * 68 + "\033[0m"
+    print(f"\n{bar}")
+    print(f"  \033[1m\033[93m{label}\033[0m")
+    print(bar)
+    print(content)
+    print(bar)
+
 # ── shared AI call ─────────────────────────────────────────────────────────────
 
-def raw_call(messages):
+def raw_call(messages, label="call"):
     conn = http.client.HTTPSConnection(host)
     data = json.dumps({"model": MODEL, "messages": messages})
     conn.request("POST", path, data, {"Content-Type": "application/json"})
@@ -119,7 +133,8 @@ def raw_call(messages):
         print(f"  AI error: empty/invalid JSON"); return ""
     if "choices" not in parsed:
         print(f"  AI error: {raw.decode()[:200]}"); return ""
-    return parsed["choices"][0]["message"]["content"]
+    content = parsed["choices"][0]["message"]["content"]
+    return content
 
 # ── evolve loop ────────────────────────────────────────────────────────────────
 
@@ -145,10 +160,18 @@ def call_ai(code):
             "Write the first version. Return the full Python file."
         )
     evolving_label = f"[{i}] {_EVOLVING[i % len(_EVOLVING)]}"
-    content = with_spinner(evolving_label, lambda _i=i: raw_call([
+    evolve_messages = [
         {"role": "system", "content": system_msg},
-        {"role": "user",   "content": user_msg}
-    ]))
+        {"role": "user",   "content": user_msg},
+    ]
+    if DEBUG:
+        debug_print(f"[evolving #{i}] SYSTEM", system_msg)
+        debug_print(f"[evolving #{i}] USER", user_msg)
+    content = with_spinner(evolving_label, lambda _i=i: raw_call(evolve_messages, label=f"evolving #{i}"))
+    if DEBUG:
+        preview = "\n".join(content.splitlines()[:30]) if content else ""
+        suffix = "\n  ... (truncated)" if content and len(content.splitlines()) > 30 else ""
+        debug_print(f"[evolving #{i}] RESPONSE (first 30 lines)", preview + suffix)
     lines = content.strip().splitlines() if content else []
     if lines and lines[0].startswith("```"): lines = lines[1:]
     if lines and lines[-1].startswith("```"): lines = lines[:-1]
@@ -205,13 +228,19 @@ _FAILED = [
 i = 0
 while True:
     thinking_label = _THINKING[i % len(_THINKING)]
-    PLAN = with_spinner(thinking_label, lambda: raw_call([
+    plan_messages = [
         {"role": "system", "content": "You are a senior software architect. Be concise."},
         {"role": "user",   "content":
             f"Goal: {PROMPT}\n\n"
             "What is the single most impactful improvement to make next? "
-            "Answer in 10 words or fewer."}
-    ]))
+            "Answer in 10 words or fewer."},
+    ]
+    if DEBUG:
+        debug_print(f"[planning #{i}] SYSTEM", plan_messages[0]["content"])
+        debug_print(f"[planning #{i}] USER", plan_messages[1]["content"])
+    PLAN = with_spinner(thinking_label, lambda: raw_call(plan_messages, label=f"planning #{i}"))
+    if DEBUG:
+        debug_print(f"[planning #{i}] RESPONSE", PLAN)
     print(f"  → {PLAN.strip()}")
     with open(SCRIPT) as f: code = f.read()
     new_code = call_ai(code)
