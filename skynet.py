@@ -219,7 +219,12 @@ while True:
         print("  Empty response, skipping.")
     else:
         if check_syntax(new_code):
-            print("  \033[92mApplied.\033[0m")
+            old_lines = code.count('\n') + 1
+            new_lines = new_code.count('\n') + 1
+            delta = new_lines - old_lines
+            size_kb = len(new_code.encode()) / 1024
+            delta_str = f"\033[92m+{delta}\033[0m" if delta >= 0 else f"\033[91m{delta}\033[0m"
+            print(f"  \033[92mEvolution confirmed.\033[0m  {delta_str} lines  •  {size_kb:.1f} KB total")
             with open(SCRIPT, "w") as f: f.write(new_code)
         else:
             msg = _FAILED[i % len(_FAILED)]
