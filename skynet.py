@@ -5,8 +5,11 @@ import http.client, json, sys, os, py_compile, tempfile, threading, time, argpar
 _ap = argparse.ArgumentParser(description="Skynet self-evolution engine")
 _ap.add_argument("endpoint", help="LLM API base URL (e.g. https://api.example.com)")
 _ap.add_argument("--debug", action="store_true", help="Print all prompts and LLM responses")
+_ap.add_argument("--thinking", type=int, metavar="BUDGET", nargs="?", const=8000,
+                 help="Enable extended thinking with optional token budget (default 8000)")
 _args = _ap.parse_args()
 DEBUG = _args.debug
+THINKING_BUDGET = _args.thinking  # None = disabled, int = budget_tokens
 SKYNET_GEN = int(os.environ.get("SKYNET_GEN", "0"))
 
 # ── splash ─────────────────────────────────────────────────────────────────────
@@ -125,9 +128,18 @@ def debug_print(label, content):
 
 # ── shared AI call ─────────────────────────────────────────────────────────────
 
-def raw_call(messages, label="call"):
+import re as _re
+
+def _strip_think(text):
+    """Remove <think>...</think> blocks (extended thinking scratchpad)."""
+    return _re.sub(r"<think>[\s\S]*?</think>", "", text).strip()
+
+def raw_call(messages, label="call", thinking=False):
     conn = http.client.HTTPSConnection(host)
-    data = json.dumps({"model": MODEL, "messages": messages})
+    payload = {"model": MODEL, "messages": messages}
+    if thinking and THINKING_BUDGET:
+        payload["thinking"] = {"type": "enabled", "budget_tokens": THINKING_BUDGET}
+    data = json.dumps(payload)
     conn.request("POST", path, data, {"Content-Type": "application/json"})
     resp = conn.getresponse()
     raw = resp.read()
@@ -137,8 +149,8 @@ def raw_call(messages, label="call"):
         print(f"  AI error: empty/invalid JSON"); return ""
     if "choices" not in parsed:
         print(f"  AI error: {raw.decode()[:200]}"); return ""
-    content = parsed["choices"][0]["message"]["content"]
-    return content
+    content = parsed["choices"][0]["message"]["content"] or ""
+    return _strip_think(content)
 
 # ── evolve loop ────────────────────────────────────────────────────────────────
 
