@@ -135,21 +135,36 @@ def _strip_think(text, label=None):
             debug_print(f"{label} REASONING", block.strip())
     return _re.sub(r"<think>[\s\S]*?</think>", "", text).strip()
 
-def raw_call(messages, label="call"):
-    conn = http.client.HTTPSConnection(host)
-    payload = {"model": MODEL, "messages": messages}
-    data = json.dumps(payload)
-    conn.request("POST", path, data, {"Content-Type": "application/json"})
-    resp = conn.getresponse()
-    raw = resp.read()
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        print(f"  AI error: empty/invalid JSON"); return ""
-    if "choices" not in parsed:
-        print(f"  AI error: {raw.decode()[:200]}"); return ""
-    content = parsed["choices"][0]["message"]["content"] or ""
-    return _strip_think(content, label=label)
+def raw_call(messages, label="call", retries=3):
+    for attempt in range(retries):
+        try:
+            conn = http.client.HTTPSConnection(host, timeout=180)
+            payload = {"model": MODEL, "messages": messages, "stream": False}
+            data = json.dumps(payload)
+            conn.request("POST", path, data, {"Content-Type": "application/json"})
+            resp = conn.getresponse()
+            raw = resp.read()
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError:
+                snippet = raw[:300].decode(errors="replace")
+                print(f"  AI error: invalid JSON — {snippet!r}")
+                if DEBUG: debug_print(f"{label} RAW ERROR", snippet)
+                if attempt < retries - 1: time.sleep(2); continue
+                return ""
+            if "choices" not in parsed:
+                msg = raw.decode(errors="replace")[:300]
+                print(f"  AI error: {msg}")
+                if DEBUG: debug_print(f"{label} API ERROR", msg)
+                if attempt < retries - 1: time.sleep(2); continue
+                return ""
+            content = parsed["choices"][0]["message"]["content"] or ""
+            return _strip_think(content, label=label)
+        except Exception as e:
+            print(f"  AI error: {e}")
+            if attempt < retries - 1: time.sleep(2); continue
+            return ""
+    return ""
 
 # ── evolve loop ────────────────────────────────────────────────────────────────
 
